@@ -1,0 +1,929 @@
+buildscript {
+    dependencies {
+        classpath 'org.apache.groovy:groovy-toml:4.0.12'
+        classpath 'org.apache.commons:commons-configuration2:2.9.0'
+    }
+}
+
+import groovy.json.JsonSlurper
+import groovy.json.JsonBuilder
+import groovy.toml.TomlBuilder
+import org.apache.commons.configuration2.PropertiesConfiguration
+
+import java.nio.file.Files
+
+plugins {
+    id "architectury-plugin" version "3.4-SNAPSHOT"
+    id "dev.architectury.loom" version "1.7-SNAPSHOT" apply false
+    id "com.github.johnrengelman.shadow" version "7.1.2" apply false
+}
+
+group = maven_group
+version = mod_version
+
+def ENV = new HashMap(System.getenv())
+
+
+def loadEnvFile(Map envTarget) {
+    def envFile = file('.env')
+    if (envFile.exists()) {
+        println "Loading .env file..."
+        envFile.eachLine { line ->
+            def trimmed = line.trim()
+            if (trimmed && !trimmed.startsWith("#") && trimmed.contains("=")) {
+                def (key, value) = trimmed.split("=", 2)
+                key = key.trim()
+                value = value.trim()
+                envTarget[key] = value
+            }
+        }
+    } else {
+        println ".env file not found — skipping"
+    }
+}
+
+
+loadEnvFile(ENV)
+
+
+tasks.register("printEnvProperties") {
+    doLast {
+        println "=== Loaded project properties ==="
+        ENV.each { key, value ->
+            if (key.startsWith("MAVEN_")) {
+                println "${key} = ${value}"
+            }
+        }
+    }
+}
+
+def props = new Properties()
+file("./gradle.properties").withInputStream { props.load(it) }
+
+gradle.projectsEvaluated {
+    def previousTask = null
+
+    subprojects.each { proj ->
+        def publishTask = proj.tasks.findByName("publish")
+        if (publishTask != null) {
+            /*
+            tasks.named("staggeredRelease").configure {
+                dependsOn(publishTask)
+            }
+            if (previousTask != null) {
+                publishTask.mustRunAfter(previousTask)
+            }
+            previousTask = publishTask
+
+             */
+        }
+    }
+}
+
+
+tasks.register("createNewModule") {
+    group = "rebalanced"
+    description = "Creates a new rebalanced module"
+
+    doLast {
+        def reader = System.in.newReader()
+
+        println("What should the name of this module be?")
+        def name = reader.readLine()
+        def mod_id = "rebalanced_${name}"
+
+        println("What should the description be?")
+        def description = reader.readLine()
+
+        println("Should mixins be enabled?")
+        def mixins = reader.readLine() == "yes"
+
+        def client_entrypoint = false // todo allow client entrypoint creating
+
+        def mainPath = file("./${name}").toPath()
+        Map<String, Object> paths = ["root" : mainPath]
+
+        (enabled_platforms + ",common").split(",").each {
+            def root = mainPath.resolve("${name}-${it}")
+            def src = root.resolve("src/main")
+            def java = src.resolve("java/${mod_package}/${name}${it != "common" ? "/${it}" : ""}")
+            def resources = src.resolve("resources")
+
+            java.toFile().mkdirs()
+            if (mixins) java.resolve("mixin/${name}").toFile().mkdirs()
+
+            resources.resolve("assets/rebalanced").toFile().mkdirs()
+            resources.resolve("data/rebalanced").toFile().mkdirs()
+
+            paths.put(it, [
+                    root : root,
+                    resources : resources,
+                    java : java
+            ])
+        }
+
+        mainPath.resolve("build.gradle").toFile().text = "dependOn(project, [])"
+
+        def mainClassName = "Rebalanced${name.capitalize()}"
+        paths.common.java.resolve("${mainClassName}.java").toFile().text =
+                """package ${mod_package}.${name};
+
+public class ${mainClassName} {
+    public static final String MOD_ID = "${mod_id}";
+    
+    public static void init() {
+        
+    }
+}
+"""
+
+        if (mixins)
+            paths.common.resources.resolve("${mod_id}-common.mixins.json").toFile().text =
+                    """{
+  "required": true,
+  "package": "${mod_package}.${name}.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
+"""
+
+        def fabricClassName = "Rebalanced${name.capitalize()}Fabric"
+        paths.fabric.java.resolve("${fabricClassName}.java").toFile().text =
+                """package ${mod_package}.${name}.fabric;
+
+import ${mod_package}.${name}.${mainClassName};
+import net.fabricmc.api.ModInitializer;
+
+public class ${fabricClassName} implements ModInitializer {
+    @Override
+    public void onInitialize() {
+        ${mainClassName}.init();
+    }
+}
+"""
+
+        if (mixins)
+            paths.fabric.resources.resolve("${mod_id}.mixins.json").toFile().text =
+                    """{
+  "required": true,
+  "package": "${mod_package}.${name}.fabric.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
+"""
+
+        paths.forge.root.resolve("gradle.properties").toFile().text = "loom.platform=neoforge"
+
+        def forgeClassName = "Rebalanced${name.capitalize()}Forge"
+        paths.forge.java.resolve("${forgeClassName}.java").toFile().text =
+                """package ${mod_package}.${name}.forge;
+
+import ${mod_package}.${name}.${mainClassName};
+import net.neoforged.fml.common.Mod;
+
+@Mod(${mainClassName}.MOD_ID)
+public class ${forgeClassName} {
+    public ${forgeClassName}() {
+        ${mainClassName}.init();
+    }
+}
+"""
+
+        if (mixins)
+            paths.forge.resources.resolve("${mod_id}.mixins.json").toFile().text =
+                    """{
+  "required": true,
+  "package": "F.${name}.forge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
+"""
+
+        paths.forge.resources.resolve("pack.mcmeta").toFile().text =
+                """{
+  "pack": {
+    "description": "Rebalanced (${name.capitalize()})",
+    "pack_format": 9
+  }
+}
+"""
+
+        mainPath.resolve("mod_data.json").toFile().text =
+                """{
+  "id": "${mod_id}",
+  "version": "1.0.0",
+  "name": "Rebalanced (${name.capitalize()})",
+  "description": "${description}",
+  "authors": [
+    "RedPxnda"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "mixins": ${mixins ? """[
+    "${mod_id}.mixins.json",
+    "${mod_id}-common.mixins.json"
+  ]""" : "[]"},
+  "depends": [
+    {
+      "id": "neoforge",
+      "mandatory": true,
+      "version": "[21.0.0-beta,)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "forge"
+    },
+    {
+      "id": "fabric",
+      "mandatory": true,
+      "version": "*",
+      "platform": "fabric"
+    },
+    {
+      "id": "minecraft",
+      "mandatory": true,
+      "version": "[\${minecraft_version},)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "*"
+    },
+    {
+      "id": "architectury",
+      "mandatory": true,
+      "version": "[\${architectury_version},)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "*"
+    }
+  ],
+  "fabric": {
+    "schemaVersion": 1,
+    "entrypoints": {
+      "main": [
+        "${mod_package}.${name}.fabric.${fabricClassName}"
+      ]
+    },
+    "custom": {
+      "modmenu": {
+        "parent": {
+          "id": "rebalanced",
+          "name": "Rebalanced",
+          "description": "A Selection of Mods focused on slightly rebalancing vanilla mechanics.",
+        }
+      }
+    }
+  },
+  "forge": {
+    "general": {
+      "modLoader": "javafml",
+      "loaderVersion": "[1,)"
+    },
+    "mod": {}
+  }
+}
+"""
+
+        PropertiesConfiguration config = new PropertiesConfiguration()
+        config.read(new FileReader("gradle.properties"))
+
+        def modules = config.getString("enabled_modules")
+        config.setProperty("enabled_modules", "${modules},${name}")
+
+        config.write(new FileWriter("gradle.properties"))
+
+        println("Done!")
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+}
+
+subprojects { Project subproject ->
+    if (subproject.parent == rootProject) {
+        ext {
+            mod_data = new JsonSlurper().parse(file("./mod_data.json"))
+            if (mod_data.properties) {
+                def mod_props = new Properties()
+                file("./${mod_data.properties}").withInputStream { mod_props.load(it) }
+                property_data = mod_props
+            } else property_data = props
+        }
+
+        if (subproject.mod_data.version == '${version}') subproject.mod_data.version = rootProject.mod_version
+
+        architectury {
+            minecraft = rootProject.minecraft_version
+        }
+    } else {
+        def platform = subproject.name
+        def module = subproject.parent.name
+        def mod_data = subproject.parent.mod_data
+
+        def ver = mod_data.version
+
+        /*println("configuring: " + subproject)
+        println("module: ${module}")
+        println("platfrom: ${platform}")*/
+
+        def isFabric = platform.endsWith("fabric")
+        def isNeoForge = platform.endsWith("forge")
+        def isCommon = platform.endsWith("common")
+
+        platform = isFabric ? "fabric" : isNeoForge ? "forge" : isCommon ? "common" : platform
+
+        if (isFabric || isNeoForge) apply plugin: "com.github.johnrengelman.shadow"
+        apply plugin: "dev.architectury.loom"
+        apply plugin: "java"
+        apply plugin: "architectury-plugin"
+        if (module != "test") apply plugin: "maven-publish"
+
+        archivesBaseName = rootProject.archives_base_name
+        version = ver
+        group = rootProject.maven_group
+
+        architectury {
+            if (isFabric) {
+                platformSetupLoomIde()
+                fabric()
+            } else if (isNeoForge) {
+                platformSetupLoomIde()
+                neoForge {
+                    platformPackage = "forge" // todo neoforge rename
+                }
+            } else if (isCommon) {
+                common(rootProject.enabled_platforms.split(",").collect { entry -> entry == "forge" ? "neoforge" : entry }) {
+                    it.platformPackage "neoforge", "forge"
+                }
+            }
+        }
+
+        loom {
+            silentMojangMappingsLicense()
+
+            /*mixin { // todo update?
+                defaultRefmapName = "rebalanced-${module}${isCommon ? "-common" : ""}.refmap.json"
+            }*/
+
+            /*if (isNeoForge) { // bye forge, hello neo!
+                forge {
+                    for (def mixin in mod_data.mixins)
+                        mixinConfig mixin
+                }
+            }*/
+        }
+
+        configurations {
+            if (isFabric || isNeoForge) {
+                common
+                shadowCommon // Don't use shadow from the shadow plugin since it *excludes* files.
+                compileClasspath.extendsFrom common
+                runtimeClasspath.extendsFrom common
+
+                if (isFabric)
+                    developmentFabric.extendsFrom common
+                if (isNeoForge)
+                    developmentNeoForge.extendsFrom common
+            }
+        }
+
+        repositories {
+            mavenCentral()
+            if (isNeoForge) maven { url "https://maven.neoforged.net/releases/" }
+            maven { url 'https://jitpack.io' }
+            maven { url 'https://maven.uuid.gg/releases' }
+            maven { url 'https://maven.terraformersmc.com/' }
+        }
+
+        dependencies {
+            minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+            mappings loom.officialMojangMappings()
+
+            if (isFabric) {
+                modImplementation "net.fabricmc:fabric-loader:${rootProject.fabric_loader_version}"
+                modApi "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
+                modApi "dev.architectury:architectury-fabric:${rootProject.architectury_version}"
+
+                /*annotationProcessor "io.github.llamalad7:mixinextras-fabric:${rootProject.mixin_extras_version}"
+                modImplementation "io.github.llamalad7:mixinextras-fabric:${rootProject.mixin_extras_version}"*/
+
+                common(project(path: ":${module}:${module}-common", configuration: "namedElements")) { transitive false }
+                shadowCommon(project(path: ":${module}:${module}-common", configuration: "transformProductionFabric")) { transitive false }
+            } else if (isNeoForge) {
+                neoForge "net.neoforged:neoforge:${rootProject.neoforge_version}"
+                //neoForge rootProject.neoforge_version
+                modApi "dev.architectury:architectury-neoforge:${rootProject.architectury_version}"
+
+                /*implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"))
+                implementation "io.github.llamalad7:mixinextras-forge:${rootProject.mixin_extras_version}"*/
+
+                common(project(path: ":${module}:${module}-common", configuration: "namedElements")) { transitive false }
+                shadowCommon(project(path: ":${module}:${module}-common", configuration: "transformProductionNeoForge")) { transitive false }
+            } else if (isCommon) {
+                // We depend on fabric loader here to use the fabric @Environment annotations and get the mixin dependencies
+                // Do NOT use other classes from fabric loader
+                modImplementation "net.fabricmc:fabric-loader:${rootProject.fabric_loader_version}"
+                modApi "dev.architectury:architectury:${rootProject.architectury_version}"
+
+                /*annotationProcessor "io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"
+                modImplementation "io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"*/
+            }
+        }
+
+        tasks.withType(JavaCompile) {
+            options.encoding = "UTF-8"
+            options.release = 21
+        }
+
+        java {
+            toolchain {
+                languageVersion.set(JavaLanguageVersion.of(21))
+            }
+            withSourcesJar()
+        }
+
+        tasks.register("generateModMetadata") {
+            group = "rebalanced"
+            description = "Generates fabric.mod.json and mods.toml from the mod_data.json file"
+
+            if (isNeoForge) {
+                doLast {
+                    def toml = new TomlBuilder()
+
+                    def depends = mod_data.depends.findAll { it.platform == "forge" || it.platform == "*" }.collect { entry ->
+                        return [
+                                modId       : entry.id,
+                                mandatory   : entry.mandatory ?: true,
+                                versionRange: entry.version == "*" ? "" : entry.version,
+                                ordering    : entry.ordering ?: "NONE",
+                                side        : entry.side ?: "BOTH"
+                        ]
+                    }
+
+                    def mod = [
+                            modId      : mod_data.id,
+                            version    : mod_data.version,
+                            displayName: mod_data.name,
+                            description: mod_data.description,
+                            authors    : mod_data.authors.join(", ")
+                    ]
+                    if (mod_data.icon) mod.logoFile = mod_data.icon
+
+                    mod_data.forge.mod.each { key, value ->
+                        mod."${key}" = value
+                    }
+
+                    def mixins = mod_data.mixins.collect { entry ->
+                        return [
+                                config : entry
+                        ]
+                    }
+
+                    def data = [
+                            license     : (mod_data.license ?: "MIT"),
+                            mods        : [mod],
+                            dependencies: ["${mod_data.id}": depends],
+                            mixins      : mixins
+                    ]
+                    mod_data.forge.general.each { key, value ->
+                        data."${key}" = value
+                    }
+
+                    toml data
+
+                    def path = file("./src/main/resources/META-INF")
+                    path.mkdirs()
+
+                    def file = path.toPath().resolve("neoforge.mods.toml")
+                    Files.deleteIfExists(file)
+                    file.withWriter { toml.writeTo(it) }
+                }
+            } else if (isFabric) {
+                doLast {
+                    LinkedHashMap<String, Object> depends = [:]
+                    mod_data.depends.findAll { (it.platform == "fabric" || it.platform == "*") && it.mandatory }.each { entry ->
+                        def v = entry.version
+                        def ineqVer = ""
+
+                        if (v.isEmpty() || v == "*") {
+                            ineqVer = "*"
+                        } else {
+                            def nums = v.split(",")
+                            def first = nums[0].substring(1)
+                            def second = nums[1].substring(0, nums[1].length() - 1)
+
+                            if (v.startsWith("["))
+                                ineqVer += ">="
+                            else
+                                ineqVer += ">"
+
+                            ineqVer += first
+                            if (!second.isEmpty()) {
+                                ineqVer += " "
+                                if (v.endsWith("]"))
+                                    ineqVer += "<="
+                                else
+                                    ineqVer += "<"
+                                ineqVer += second
+                            }
+                        }
+
+                        depends.(entry.id) = ineqVer
+                    }
+
+                    def json = new JsonBuilder(mod_data.fabric + mod_data.findAll { key, value -> key != "depends" && key != "fabric" && key != "forge" && key != "properties" } + ["depends": depends])
+
+                    def path = file("./src/main/resources")
+                    path.mkdirs()
+
+                    def file = path.toPath().resolve("fabric.mod.json")
+                    Files.deleteIfExists(file)
+                    file.withWriter { json.writeTo(it) }
+                }
+            }
+        }
+
+        processResources {
+            dependsOn "generateModMetadata"
+
+            if (isFabric || isNeoForge) {
+                inputs.properties subproject.property_data
+
+                if (isFabric)
+                    filesMatching("fabric.mod.json") {
+                        expand subproject.property_data
+                    }
+
+                if (isNeoForge)
+                    filesMatching("META-INF/neoforge.mods.toml") {
+                        expand subproject.property_data
+                    }
+            }
+        }
+
+        if (isFabric || isNeoForge) {
+            shadowJar {
+                configurations = [project.configurations.shadowCommon]
+                archiveClassifier = "dev-shadow"
+
+                if (isNeoForge)
+                    exclude "fabric.mod.json"
+            }
+        }
+
+        remapJar {
+            if (isFabric || isNeoForge) {
+                input.set shadowJar.archiveFile
+                dependsOn shadowJar
+                archiveClassifier = null
+            }
+
+            archiveFileName = "rebalanced-${module}-${platform}-${rootProject.minecraft_version}+${ver}.jar"
+            destinationDirectory.set(file("$rootDir/build/${ver}/${platform}"))
+        }
+
+        remapSourcesJar {
+            archiveFileName = "rebalanced-${module}-${platform}-${rootProject.minecraft_version}+${ver}-sources.jar"
+            destinationDirectory.set(file("$rootDir/build/${ver}/${platform}"))
+        }
+
+        if (isFabric || isNeoForge) {
+            jar {
+                archiveClassifier = "dev"
+            }
+
+            sourcesJar {
+                def commonSources = project(":${module}:${module}-common").sourcesJar
+                dependsOn commonSources
+                from commonSources.archiveFile.map { zipTree(it) }
+            }
+
+            components.java {
+                withVariantsFromConfiguration(project.configurations.shadowRuntimeElements) {
+                    skip()
+                }
+            }
+        }
+
+        if (module != "test") {
+            publishing {
+                publications {
+                    if (isFabric) {
+                        mavenFabric(MavenPublication) {
+                            artifactId = "rebalanced-" + module + "-" + platform
+                            version = rootProject.minecraft_version + "+" + ver
+                            groupId = rootProject.maven_group + ".rebalanced"
+
+                            from components.java
+                        }
+                    } else if (isNeoForge) {
+                        mavenForge(MavenPublication) {
+                            artifactId = "rebalanced-" + module + "-" + platform
+                            version = rootProject.minecraft_version + "+" + ver
+                            groupId = rootProject.maven_group + ".rebalanced"
+
+                            from components.java
+                        }
+                    } else if (isCommon) {
+                        mavenCommon(MavenPublication) {
+                            artifactId = "rebalanced-" + module + "-" + platform
+                            version = rootProject.minecraft_version + "+" + ver
+                            groupId = rootProject.maven_group + ".rebalanced"
+
+                            from components.java
+                        }
+                    }
+                }
+
+                repositories {
+                    /*maven {
+                        url uri(file("$rootDir/build/repository"))
+                    }*/
+
+                    def loc = ENV.MAVEN_UPLOAD_URL
+                    def user = ENV.MAVEN_UPLOAD_USERNAME
+                    def code = ENV.MAVEN_UPLOAD_PASSWORD
+                    if (loc) {
+                        maven {
+                            url = loc
+                            credentials {
+                                username = user
+                                password = code
+                            }
+                        }
+                    }
+                }
+            }
+
+            /*tasks.register("githubPublish") {
+                finalizedBy ":${module}:${module}-${platform}:publish"
+                group = "publishing"
+
+                doLast {
+                    if (isCommon)
+                        publishing.publications.mavenCommon.groupId = "com.${rootProject.github}"
+                    else if (isFabric)
+                        publishing.publications.mavenFabric.groupId = "com.${rootProject.github}"
+                    else if (isNeoForge)
+                        publishing.publications.mavenForge.groupId = "com.${rootProject.github}"
+                }
+            }*/
+        }
+    }
+}
+
+static def includeMixinExtras(Project proj) {
+    /*proj.subprojects { Project subproject ->
+        def platform = subproject.name
+
+        def isFabric = platform.endsWith("fabric")
+        def isNeoForge = platform.endsWith("forge") // todo project names forge->neoforge
+        def isCommon = platform.endsWith("common")
+
+        dependencies {
+            if (isFabric) {
+                include(implementation(annotationProcessor("io.github.llamalad7:mixinextras-fabric:${rootProject.mixin_extras_version}")))
+            } else if (isNeoForge) {
+                implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"))
+                //implementation(include("io.github.llamalad7:mixinextras-forge:${rootProject.mixin_extras_version}"))
+            } else if (isCommon) {
+                implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"))
+            }
+        }
+    }*/
+}
+
+static def implementMixinExtras(Project proj) {
+    /*proj.subprojects { Project subproject ->
+        def platform = subproject.name
+
+        def isFabric = platform.endsWith("fabric")
+        def isNeoForge = platform.endsWith("forge")
+        def isCommon = platform.endsWith("common")
+
+        dependencies {
+            if (isFabric) {
+                implementation(annotationProcessor("io.github.llamalad7:mixinextras-fabric:${rootProject.mixin_extras_version}"))
+            } else if (isNeoForge) {
+                implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"))
+                implementation "io.github.llamalad7:mixinextras-forge:${rootProject.mixin_extras_version}"
+            } else if (isCommon) {
+                implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:${rootProject.mixin_extras_version}"))
+            }
+        }
+    }*/
+}
+
+static def copyAccessWidenersFrom(Project proj, String module) {
+    proj.subprojects { Project subproject ->
+        def platform = subproject.name
+
+        def isFabric = platform.endsWith("fabric")
+        def isNeoForge = platform.endsWith("forge")
+        def isCommon = platform.endsWith("common")
+
+        loom {
+            if (isCommon)
+                accessWidenerPath = project(":${module}:${module}-common").loom.accessWidenerPath
+
+            if (isFabric)
+                accessWidenerPath = project(":${module}:${module}-fabric").loom.accessWidenerPath
+
+            if (isNeoForge) {
+                accessWidenerPath = project(":${module}:${module}-forge").loom.accessWidenerPath
+
+                /*forge {
+                    convertAccessWideners = true
+                    extraAccessWideners.add loom.accessWidenerPath.get().asFile.name
+                }*/
+            }
+        }
+
+        if (isFabric || isNeoForge)
+            shadowJar {
+                exclude "architectury.common.json"
+            }
+
+        if (isFabric)
+            remapJar {
+                injectAccessWidener = true
+            }
+    }
+}
+
+static def setupAccessWideners(Project proj, String path) {
+    proj.subprojects { Project subproject ->
+        def platform = subproject.name
+
+        def isFabric = platform.endsWith("fabric")
+        def isNeoForge = platform.endsWith("forge")
+        def isCommon = platform.endsWith("common")
+
+        loom {
+            if (isCommon)
+                accessWidenerPath = file(path)
+
+            if (isFabric || isNeoForge)
+                accessWidenerPath = project(":${proj.name}:${proj.name}-common").loom.accessWidenerPath
+
+            /*if (isNeoForge)
+                forge {
+                    convertAccessWideners = true
+                    extraAccessWideners.add loom.accessWidenerPath.get().asFile.name
+                }*/
+        }
+
+        if (isFabric || isNeoForge) {
+            shadowJar {
+                //exclude "architectury-common.accessWidener"
+                exclude "architectury.common.json"
+            }
+
+            remapJar {
+                if (isFabric) injectAccessWidener = true
+                if (isNeoForge) atAccessWideners.add "rebalanced.accessWidener" // todo not this
+            }
+        }
+    }
+}
+
+static def setupAccessWideners(Project proj) {
+    setupAccessWideners(proj, "src/main/resources/rebalanced-${proj.name}.accessWidener")
+}
+
+static def setupSharedDepends(Project proj) {
+    proj.subprojects { Project sub ->
+        def plat = sub.name.split("-")[1]
+
+        if (proj.hasProperty("shared_repos")) {
+            proj.shared_repos.get(plat).each { String repo ->
+                sub.repositories.maven({ url repo })
+            }
+        }
+
+        if (proj.hasProperty("shared_depends")) {
+            proj.shared_depends.get(plat).each { Closure adder ->
+                adder.call(sub.dependencies)
+            }
+        }
+    }
+}
+
+static def dependOn(Project proj, List<String> depNames) {
+    proj.subprojects { Project subproject ->
+        def plat = subproject.name.split("-")[1]
+
+        if (plat == "forge") {
+            loom {
+                mods {
+                    depNames.each { String dep ->
+                        if (!dep.startsWith("nucleus.")) {
+                            "${dep}" {
+                                sourceSet project(":${dep}:${dep}-forge").sourceSets.main
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        depNames.each { String dep ->
+
+            // External Nucleus dependency
+            if (dep.startsWith("nucleus.")) {
+                def module = dep.substring("nucleus.".length())
+                def versionProperty = "${dep}.version"
+
+                def nucleusVersion = proj.rootProject.findProperty(versionProperty)
+
+                if (!nucleusVersion) {
+                    throw new GradleException(
+                            "Missing property '${versionProperty}' in gradle.properties"
+                    )
+                }
+
+                def dependency =
+                        "com.redpxnda.nucleus:nucleus-${module}-${plat}:1.21+${nucleusVersion}"
+
+                // Add to compile classpath
+                def modDependency =
+                        subproject.dependencies.create(dependency)
+
+                subproject.dependencies.add("modApi", modDependency)
+
+                // Include it in the final platform mod
+                if (plat == "fabric" || plat == "forge") {
+                    subproject.dependencies.add(
+                            "include",
+                            subproject.dependencies.create(dependency)
+                    )
+                }
+
+            } else {
+
+                // Existing local project dependency handling
+                def platformProj = project(":${dep}:${dep}-${plat}")
+
+                if (platformProj.hasProperty("shared_repos")) {
+                    platformProj.shared_repos.get(plat).each { String repo ->
+                        subproject.repositories.maven({ url repo })
+                    }
+                }
+
+                if (platformProj.hasProperty("shared_depends")) {
+                    platformProj.shared_depends.get(plat).each { Closure adder ->
+                        adder.call(subproject.dependencies)
+                    }
+                }
+
+                dependencies {
+                    api project(path: ":${dep}:${dep}-${plat}",
+                            configuration: "namedElements")
+
+                    if (plat != "common") {
+                        common(project(
+                                path: ":${dep}:${dep}-common",
+                                configuration: "namedElements"
+                        )) { transitive false }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*tasks.register("githubPublishAll") {
+    group = "rebalanced"
+
+    def modules = enabled_modules.split(",").findAll { it != "test" }
+    def platforms = (enabled_platforms+",common").split(",").findAll { !it.isEmpty() }
+    for (final def module in modules) {
+        for (final def platform in platforms) {
+            finalizedBy(":${module}:${module}-${platform}:githubPublish")
+        }
+    }
+}*/

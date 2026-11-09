@@ -1,0 +1,71 @@
+{
+  "id": "rebalanced_health",
+  "version": "1.0.0",
+  "name": "Rebalanced (Health)",
+  "description": "Rebalanced Health regeneration",
+  "authors": [
+    "RedPxnda"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "mixins": [
+    "rebalanced_health.mixins.json",
+    "rebalanced_health-common.mixins.json"
+  ],
+  "depends": [
+    {
+      "id": "neoforge",
+      "mandatory": true,
+      "version": "[21.0.0-beta,)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "forge"
+    },
+    {
+      "id": "fabric",
+      "mandatory": true,
+      "version": "*",
+      "platform": "fabric"
+    },
+    {
+      "id": "minecraft",
+      "mandatory": true,
+      "version": "[${minecraft_version},)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "*"
+    },
+    {
+      "id": "architectury",
+      "mandatory": true,
+      "version": "[${architectury_version},)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "*"
+    }
+  ],
+  "fabric": {
+    "schemaVersion": 1,
+    "entrypoints": {
+      "main": [
+        "com.smartin.rebalanced.health.fabric.RebalancedHealthFabric"
+      ]
+    },
+    "custom": {
+      "modmenu": {
+        "parent": {
+          "id": "rebalanced",
+          "name": "Rebalanced",
+          "description": "A Selection of Mods focused on slightly rebalancing vanilla mechanics.",
+        }
+      }
+    }
+  },
+  "forge": {
+    "general": {
+      "modLoader": "javafml",
+      "loaderVersion": "[1,)"
+    },
+    "mod": {}
+  }
+}

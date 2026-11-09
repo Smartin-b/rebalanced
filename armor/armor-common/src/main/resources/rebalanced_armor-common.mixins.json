@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "com.smartin.rebalanced.armor.mixin.armor",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+    "CombatRulesMixin",
+    "GuiMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

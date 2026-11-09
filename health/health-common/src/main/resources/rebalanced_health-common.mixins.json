@@ -1,0 +1,14 @@
+{
+    "required": true,
+    "package": "com.smartin.rebalanced.health.mixin",
+    "compatibilityLevel": "JAVA_21",
+    "minVersion": "0.8",
+    "client": [
+    ],
+    "mixins": [
+        "health.FoodDataMixin"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+  }
+}

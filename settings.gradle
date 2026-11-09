@@ -1,0 +1,21 @@
+pluginManagement {
+    repositories {
+        maven { url "https://maven.fabricmc.net/" }
+        maven { url "https://maven.architectury.dev/" }
+        maven { url "https://maven.neoforged.net/releases/" }
+        maven { url 'https://jitpack.io' }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'rebalanced'
+
+def modules = enabled_modules.split(",")
+def platforms = (enabled_platforms + ",common").split(",")
+
+for (module in modules) {
+    include(":${module}")
+    for (platform in platforms) {
+        include(":${module}:${module}-${platform}")
+    }
+}

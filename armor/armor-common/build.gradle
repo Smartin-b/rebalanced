@@ -1,0 +1,6 @@
+repositories {
+}
+
+dependencies {
+    api(include("com.ezylang:EvalEx:${rootProject.eval_ex_version}"))
+}

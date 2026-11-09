@@ -1,0 +1,71 @@
+{
+  "id": "rebalanced_potion",
+  "version": "1.0.0",
+  "name": "Rebalanced (Potion)",
+  "description": "Rebalanced Potion strength and stackability",
+  "authors": [
+    "RedPxnda"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "mixins": [
+    "rebalanced_potion.mixins.json",
+    "rebalanced_potion-common.mixins.json"
+  ],
+  "depends": [
+    {
+      "id": "neoforge",
+      "mandatory": true,
+      "version": "[21.0.0-beta,)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "forge"
+    },
+    {
+      "id": "fabric",
+      "mandatory": true,
+      "version": "*",
+      "platform": "fabric"
+    },
+    {
+      "id": "minecraft",
+      "mandatory": true,
+      "version": "[${minecraft_version},)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "*"
+    },
+    {
+      "id": "architectury",
+      "mandatory": true,
+      "version": "[${architectury_version},)",
+      "ordering": "NONE",
+      "side": "BOTH",
+      "platform": "*"
+    }
+  ],
+  "fabric": {
+    "schemaVersion": 1,
+    "entrypoints": {
+      "main": [
+        "com.smartin.rebalanced.potion.fabric.RebalancedPotionFabric"
+      ]
+    },
+    "custom": {
+      "modmenu": {
+        "parent": {
+          "id": "rebalanced",
+          "name": "Rebalanced",
+          "description": "A Selection of Mods focused on slightly rebalancing vanilla mechanics.",
+        }
+      }
+    }
+  },
+  "forge": {
+    "general": {
+      "modLoader": "javafml",
+      "loaderVersion": "[1,)"
+    },
+    "mod": {}
+  }
+}
